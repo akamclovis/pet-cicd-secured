@@ -79,10 +79,13 @@ public class PostgresIntegrationTests {
 	}
 
 	@Test
-	void findAll() throws Exception {
-		vets.findAll();
-		vets.findAll(); // served from cache
-	}
+void findAll() {
+    var firstResult = vets.findAll();
+    var cachedResult = vets.findAll();
+
+    assertThat(firstResult).isNotEmpty();
+    assertThat(cachedResult).containsExactlyElementsOf(firstResult);
+}
 
 	@Test
 	void ownerDetails() {

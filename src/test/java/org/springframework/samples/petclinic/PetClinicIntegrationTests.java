@@ -44,10 +44,13 @@ public class PetClinicIntegrationTests {
 	private RestTemplateBuilder builder;
 
 	@Test
-	void findAll() {
-		vets.findAll();
-		vets.findAll(); // served from cache
-	}
+void findAll() {
+    var firstResult = vets.findAll();
+    var cachedResult = vets.findAll();
+
+    assertThat(firstResult).isNotEmpty();
+    assertThat(cachedResult).containsExactlyElementsOf(firstResult);
+}
 
 	@Test
 	void ownerDetails() {
