@@ -79,13 +79,13 @@ public class PostgresIntegrationTests {
 	}
 
 	@Test
-void findAll() {
-    var firstResult = vets.findAll();
-    var cachedResult = vets.findAll();
+	void findAll() {
+		var firstResult = vets.findAll();
+		var cachedResult = vets.findAll();
 
-    assertThat(firstResult).isNotEmpty();
-    assertThat(cachedResult).containsExactlyElementsOf(firstResult);
-}
+		assertThat(firstResult).isNotEmpty();
+		assertThat(cachedResult).containsExactlyElementsOf(firstResult);
+	}
 
 	@Test
 	void ownerDetails() {
