@@ -182,9 +182,6 @@ jobs:
       contents: read
       id-token: write
 
-    outputs:
-      image-uri: ${{ steps.publish.outputs.image-uri }}
-
     steps:
       - name: Download scanned Docker image
         uses: actions/download-artifact@v4
@@ -209,7 +206,6 @@ jobs:
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Tag and push image
-        id: publish
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
@@ -225,8 +221,6 @@ jobs:
 
           docker push "$IMAGE_URI"
           docker push "$LATEST_URI"
-
-          echo "image-uri=$IMAGE_URI" >> "$GITHUB_OUTPUT"
 
   deploy:
     name: Deploy Pet Clinic to EC2
@@ -255,22 +249,33 @@ jobs:
           install -d -m 700 "$HOME/.ssh"
           printf '%s\n' "$EC2_SSH_KEY" > deploy_key.pem
           chmod 600 deploy_key.pem
-          ssh-keyscan -H "$EC2_HOST" >> "$HOME/.ssh/known_hosts"  
+          ssh-keyscan -T 10 -H "$EC2_HOST" >> "$HOME/.ssh/known_hosts"
 
       - name: Pull and run the ECR image on EC2
         env:
-          IMAGE_URI: ${{ needs.publish-to-ecr.outputs.image-uri }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ github.sha }}
         run: |
           set -euo pipefail
 
           ssh -i deploy_key.pem "$EC2_USER@$EC2_HOST" \
-            "bash -s -- '$AWS_REGION' '$IMAGE_URI' '$APP_PORT'" <<'REMOTE_SCRIPT'
+            "bash -s -- '$AWS_REGION' '$ECR_REPOSITORY' '$IMAGE_TAG' '$APP_PORT'" <<'REMOTE_SCRIPT'
               set -euo pipefail
 
               AWS_REGION="$1"
-              IMAGE_URI="$2"
-              APP_PORT="$3"
-              ECR_REGISTRY="${IMAGE_URI%%/*}"
+              ECR_REPOSITORY="$2"
+              IMAGE_TAG="$3"
+              APP_PORT="$4"
+
+              AWS_ACCOUNT_ID="$(aws sts get-caller-identity \
+                --query Account \
+                --output text)"
+
+              ECR_REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+              IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+
+              echo "Deploying image tag: ${IMAGE_TAG}"
 
               aws ecr get-login-password --region "$AWS_REGION" |
                 sudo docker login \
@@ -288,7 +293,8 @@ jobs:
 
               sleep 10
 
-              if [ "$(sudo docker inspect --format='{{.State.Running}}' pet-clinic)" != "true" ]; then
+              if [ "$(sudo docker inspect \
+                --format='{{.State.Running}}' pet-clinic)" != "true" ]; then
                 sudo docker logs pet-clinic
                 exit 1
               fi
