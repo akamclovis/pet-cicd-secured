@@ -248,14 +248,33 @@ jobs:
             secret/devsecops-pipeline/ec2 EC2_USER    | EC2_USER ;
             secret/devsecops-pipeline/ec2 EC2_SSH_KEY | EC2_SSH_KEY
 
+      # - name: Prepare SSH credentials
+      #   run: |
+      #     set -euo pipefail
+
+      #     install -d -m 700 "$HOME/.ssh"
+      #     printf '%s\n' "$EC2_SSH_KEY" > deploy_key.pem
+      #     chmod 600 deploy_key.pem
+      #     ssh-keyscan -H "$EC2_HOST" >> "$HOME/.ssh/known_hosts"
+
       - name: Prepare SSH credentials
         run: |
-          set -euo pipefail
+          set -x
 
           install -d -m 700 "$HOME/.ssh"
+          echo "Created .ssh"
+
           printf '%s\n' "$EC2_SSH_KEY" > deploy_key.pem
+          echo "SSH key written"
+
           chmod 600 deploy_key.pem
-          ssh-keyscan -H "$EC2_HOST" >> "$HOME/.ssh/known_hosts"
+          echo "Permissions updated"
+
+          echo "Testing SSH host..."
+
+          ssh-keyscan -T 10 -H "$EC2_HOST" >> "$HOME/.ssh/known_hosts"
+
+          echo "ssh-keyscan succeeded"    
 
       - name: Pull and run the ECR image on EC2
         env:
