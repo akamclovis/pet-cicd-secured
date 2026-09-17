@@ -46,3 +46,30 @@ out/
 _site/
 *.css
 !petclinic.css
+
+### Terraform ###
+
+# Local Terraform working directories
+**/.terraform/*
+
+# Terraform state
+*.tfstate
+*.tfstate.*
+
+# Saved Terraform plans
+*.tfplan
+
+# Local variable files - may contain environment-specific/sensitive values
+*.tfvars
+*.tfvars.json
+
+# Terraform crash logs
+crash.log
+crash.*.log
+
+# Keep the provider lock file in Git
+!.terraform.lock.hcl
+
+# Terraform generated review/debug artifacts
+dependency-graph.dot
+*-plan.txt
