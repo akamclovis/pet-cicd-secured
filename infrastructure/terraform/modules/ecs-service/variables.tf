@@ -56,3 +56,8 @@ variable "desired_count" {
   type        = number
   default     = 1
 }
+
+variable "github_actions_role_name" {
+  description = "Existing IAM role assumed by GitHub Actions through OIDC"
+  type        = string
+}

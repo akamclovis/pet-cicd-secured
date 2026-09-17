@@ -55,4 +55,6 @@ module "ecs_service" {
   target_group_arn       = module.alb.target_group_arn
 
   desired_count = 1
+
+  github_actions_role_name = "pet-clinic-oidc"
 }

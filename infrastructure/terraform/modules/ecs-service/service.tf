@@ -33,4 +33,10 @@ resource "aws_ecs_service" "app" {
     Name        = "${var.project_name}-${var.environment}-service"
     Environment = var.environment
   }
+
+  lifecycle {
+    ignore_changes = [
+      task_definition
+    ]
+  }
 }
