@@ -83,7 +83,7 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
-
+      id-token: write
     steps:
       - name: Checkout source code
         uses: actions/checkout@v4
@@ -103,13 +103,15 @@ jobs:
           name: maven-target
           path: target
 
-      - name: Read SonarCloud token from Vault
+      - name: Import Sonar token from Vault
         uses: hashicorp/vault-action@v3.4.0
         with:
           url: ${{ secrets.VAULT_ADDR }}
-          token: ${{ secrets.VAULT_TOKEN }}
+          method: jwt
+          role: pet-clinic-github
+          jwtGithubAudience: vault.techlearnx.com
           secrets: |
-            secret/devsecops-pipeline/sonar SONAR_TOKEN | SONAR_TOKEN
+            secret/data/devsecops-pipeline/sonar SONAR_TOKEN | SONAR_TOKEN
 
       - name: Run SonarCloud analysis and wait for Quality Gate
         run: |
