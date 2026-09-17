@@ -115,12 +115,13 @@ jobs:
 
       - name: Run SonarCloud analysis and wait for Quality Gate
         run: |
-          mvn --batch-mode --no-transfer-progress sonar:sonar \
-            -Dsonar.projectKey=akamclovis_pet-cicd-secured \
-            -Dsonar.organization=akamclovis \
-            -Dsonar.host.url=https://sonarcloud.io \
-            -Dsonar.token="$SONAR_TOKEN" \
-            -Dsonar.qualitygate.wait=true
+          ./mvnw --batch-mode --no-transfer-progress \
+          org.sonarsource.scanner.maven:sonar-maven-plugin:sonar \
+          -Dsonar.projectKey=akamclovis_pet \
+          -Dsonar.organization=akamclovis \
+          -Dsonar.host.url=https://sonarcloud.io \
+          -Dsonar.token="${SONAR_TOKEN}" \
+          -Dsonar.qualitygate.wait=true
 
   filesystem-scan:
     name: Trivy Filesystem Scan
