@@ -73,3 +73,4 @@ crash.*.log
 # Terraform generated review/debug artifacts
 dependency-graph.dot
 *-plan.txt
+*tfplan
