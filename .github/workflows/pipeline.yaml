@@ -16,6 +16,9 @@ env:
   JAVA_VERSION: "17"
   AWS_REGION: ${{ secrets.AWS_REGION }}
   APP_PORT: "8080"
+  ECS_CLUSTER: "pet-clinic-dev-cluster"
+  ECS_SERVICE: "pet-clinic-dev-service"
+  ECS_CONTAINER_NAME: "pet-clinic"
 
 jobs:
   secret-scan:
@@ -244,3 +247,127 @@ jobs:
 
           docker push "$IMAGE_URI"
           docker push "$LATEST_URI"
+
+  deploy-to-ecs:
+    name: Deploy to Amazon ECS
+    runs-on: ubuntu-latest
+    needs: publish-to-ecr
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    timeout-minutes: 20
+
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Configure temporary AWS credentials with GitHub OIDC
+        uses: aws-actions/configure-aws-credentials@cabfdba3510de1431bac9dba27511d97497fc100
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-session-name: pet-clinic-deploy-${{ github.run_id }}
+
+      - name: Get current ECS task definition
+        run: |
+          set -euo pipefail
+
+          TASK_DEFINITION_ARN=$(aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --query 'services[0].taskDefinition' \
+            --output text)
+
+          echo "Current task definition: $TASK_DEFINITION_ARN"
+
+          aws ecs describe-task-definition \
+            --task-definition "$TASK_DEFINITION_ARN" \
+            --query 'taskDefinition' \
+            --output json > current-task-definition.json
+
+      - name: Prepare new task definition
+        env:
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          IMAGE_URI="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com/${ECR_REPOSITORY}:${IMAGE_TAG}"
+
+          echo "Preparing ECS deployment for image tag: $IMAGE_TAG"
+
+          CONTAINER_EXISTS=$(jq \
+            --arg CONTAINER "$ECS_CONTAINER_NAME" \
+            '[.containerDefinitions[] | select(.name == $CONTAINER)] | length' \
+            current-task-definition.json)
+
+          if [ "$CONTAINER_EXISTS" -ne 1 ]; then
+            echo "ERROR: Expected exactly one container named '$ECS_CONTAINER_NAME', found $CONTAINER_EXISTS."
+            exit 1
+          fi
+
+          jq \
+            --arg IMAGE "$IMAGE_URI" \
+            --arg CONTAINER "$ECS_CONTAINER_NAME" \
+            '
+            .containerDefinitions |= map(
+              if .name == $CONTAINER
+              then .image = $IMAGE
+              else .
+              end
+            )
+            |
+            del(
+              .taskDefinitionArn,
+              .revision,
+              .status,
+              .requiresAttributes,
+              .compatibilities,
+              .registeredAt,
+              .registeredBy,
+              .deregisteredAt
+            )
+            ' current-task-definition.json \
+            > new-task-definition.json
+
+      - name: Register new ECS task definition
+        id: register-task-definition
+        run: |
+          set -euo pipefail
+
+          NEW_TASK_DEFINITION_ARN=$(aws ecs register-task-definition \
+            --cli-input-json file://new-task-definition.json \
+            --query 'taskDefinition.taskDefinitionArn' \
+            --output text)
+
+          echo "Registered task definition: $NEW_TASK_DEFINITION_ARN"
+          echo "task_definition_arn=$NEW_TASK_DEFINITION_ARN" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy new task definition to ECS
+        env:
+          TASK_DEFINITION_ARN: ${{ steps.register-task-definition.outputs.task_definition_arn }}
+        run: |
+          set -euo pipefail
+
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --task-definition "$TASK_DEFINITION_ARN"
+
+      - name: Wait for ECS service stability
+        run: |
+          set -euo pipefail
+
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE"
+
+      - name: Verify deployed revision
+        run: |
+          set -euo pipefail
+
+          aws ecs describe-services \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE" \
+            --query 'services[0].{Status:status,Desired:desiredCount,Running:runningCount,Pending:pendingCount,TaskDefinition:taskDefinition}' \
+            --output table
