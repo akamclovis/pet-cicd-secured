@@ -1,178 +1,442 @@
-# Spring PetClinic Sample Application [![Build Status](https://github.com/spring-projects/spring-petclinic/actions/workflows/maven-build.yml/badge.svg)](https://github.com/spring-projects/spring-petclinic/actions/workflows/maven-build.yml)[![Build Status](https://github.com/spring-projects/spring-petclinic/actions/workflows/gradle-build.yml/badge.svg)](https://github.com/spring-projects/spring-petclinic/actions/workflows/gradle-build.yml)
+# Spring PetClinic DevSecOps CI/CD on AWS
 
-[![Open in Gitpod](https://gitpod.io/button/open-in-gitpod.svg)](https://gitpod.io/#https://github.com/spring-projects/spring-petclinic) [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://github.com/codespaces/new?hide_repo_select=true&ref=main&repo=7517918)
+A hands-on DevSecOps project implementing a secure, automated CI/CD pipeline and AWS container infrastructure for the open-source Spring PetClinic application.
 
-## Understanding the Spring Petclinic application with a few diagrams
+The project demonstrates infrastructure as code, CI/CD automation, container security, secrets management, cloud authentication, vulnerability scanning, and automated application deployment to Amazon ECS.
 
-See the presentation here:  
-[Spring Petclinic Sample Application (legacy slides)](https://speakerdeck.com/michaelisvy/spring-petclinic-sample-application?slide=20)
+> **Application attribution:** The application is based on the open-source [Spring PetClinic](https://github.com/spring-projects/spring-petclinic) project. The focus of this repository is the DevSecOps, CI/CD, containerization, security, and AWS infrastructure implemented around the application.
 
-> **Note:** These slides refer to a legacy, pre–Spring Boot version of Petclinic and may not reflect the current Spring Boot–based implementation.  
-> For up-to-date information, please refer to this repository and its documentation.
+---
 
+## Project Overview
 
-## Run Petclinic locally
+The goal of this project is to implement a production-style DevSecOps delivery workflow around a Java Spring Boot application.
 
-Spring Petclinic is a [Spring Boot](https://spring.io/guides/gs/spring-boot) application built using [Maven](https://spring.io/guides/gs/maven/) or [Gradle](https://spring.io/guides/gs/gradle/).
-Java 17 or later is required for the build, and the application can run with Java 17 or newer.
+Infrastructure is provisioned with Terraform, while GitHub Actions builds, tests, scans, publishes, and deploys the application.
 
-You first need to clone the project locally:
+A merge to `main` triggers an automated pipeline that:
 
-```bash
-git clone https://github.com/spring-projects/spring-petclinic.git
-cd spring-petclinic
-```
-If you are using Maven, you can start the application on the command-line as follows:
+1. Scans the repository for exposed secrets with Gitleaks.
+2. Builds and tests the Java application with Maven.
+3. Performs static code analysis and enforces the SonarCloud Quality Gate.
+4. Scans the application filesystem with Trivy.
+5. Builds the Docker image.
+6. Scans the container image for HIGH and CRITICAL vulnerabilities.
+7. Authenticates to AWS using GitHub OIDC.
+8. Publishes the approved image to Amazon ECR using the Git commit SHA as an immutable image tag.
+9. Registers a new Amazon ECS task-definition revision.
+10. Updates the ECS service to the new revision.
+11. Waits for the ECS service to stabilize.
+12. Verifies the deployed revision.
 
-```bash
-./mvnw spring-boot:run
-```
-With Gradle, the command is as follows:
+No long-lived AWS access keys are required by the deployment pipeline.
 
-```bash
-./gradlew bootRun
-```
+---
 
-You can then access the Petclinic at <http://localhost:8080/>.
+## Architecture
 
-<img width="1042" alt="petclinic-screenshot" src="https://cloud.githubusercontent.com/assets/838318/19727082/2aee6d6c-9b8e-11e6-81fe-e889a5ddfded.png">
-
-You can, of course, run Petclinic in your favorite IDE.
-See below for more details.
-
-## Building a Container
-
-There is no `Dockerfile` in this project. You can build a container image (if you have a docker daemon) using the Spring Boot build plugin:
-
-## Running the Container Image
-
-```bash
-./mvnw spring-boot:build-image
-docker images | grep petclinic
-docker run -p 8080:8080 docker.io/library/spring-petclinic:latest
-```
-
-## In case you find a bug/suggested improvement for Spring Petclinic
-
-Our issue tracker is available [here](https://github.com/spring-projects/spring-petclinic/issues).
-
-## Database configuration
-
-In its default configuration, Petclinic uses an in-memory database (H2) which
-gets populated at startup with data. The h2 console is exposed at `http://localhost:8080/h2-console`,
-and it is possible to inspect the content of the database using the `jdbc:h2:mem:<uuid>` URL. The UUID is printed at startup to the console.
-
-A similar setup is provided for MySQL and PostgreSQL if a persistent database configuration is needed. Note that whenever the database type changes, the app needs to run with a different profile: `spring.profiles.active=mysql` for MySQL or `spring.profiles.active=postgres` for PostgreSQL. See the [Spring Boot documentation](https://docs.spring.io/spring-boot/how-to/properties-and-configuration.html#howto.properties-and-configuration.set-active-spring-profiles) for more detail on how to set the active profile.
-
-You can start MySQL or PostgreSQL locally with whatever installer works for your OS or use docker:
-
-```bash
-docker run -e MYSQL_USER=petclinic -e MYSQL_PASSWORD=petclinic -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=petclinic -p 3306:3306 mysql:9.7
-```
-
-or
-
-```bash
-docker run -e POSTGRES_USER=petclinic -e POSTGRES_PASSWORD=petclinic -e POSTGRES_DB=petclinic -p 5432:5432 postgres:18.4
-```
-
-Further documentation is provided for [MySQL](https://github.com/spring-projects/spring-petclinic/blob/main/src/main/resources/db/mysql/petclinic_db_setup_mysql.txt)
-and [PostgreSQL](https://github.com/spring-projects/spring-petclinic/blob/main/src/main/resources/db/postgres/petclinic_db_setup_postgres.txt).
-
-Instead of vanilla `docker` you can also use the provided `docker-compose.yml` file to start the database containers. Each one has a service named after the Spring profile:
-
-```bash
-docker compose up mysql
+```text
+                           GitHub
+                              │
+                        Merge to main
+                              │
+                              ▼
+                       GitHub Actions
+                              │
+          ┌───────────────────┼────────────────────┐
+          │                   │                    │
+          ▼                   ▼                    ▼
+       Gitleaks           SonarCloud             Trivy
+      Secret Scan        Quality Gate       Filesystem Scan
+                              │
+                              │ Sonar token
+                              ▼
+                       HashiCorp Vault
+                              │
+          └───────────────────┼────────────────────┘
+                              ▼
+                       Maven Build/Test
+                              │
+                              ▼
+                         Docker Build
+                              │
+                              ▼
+                       Trivy Image Scan
+                              │
+                              ▼
+                    GitHub OIDC → AWS IAM
+                              │
+                              ▼
+                         Amazon ECR
+                    Immutable Git-SHA image
+                              │
+                              ▼
+                   New ECS Task Definition
+                              │
+                              ▼
+                     ECS Service on EC2
+                              │
+                              ▼
+                  Application Load Balancer
+                              │
+                              ▼
+                       Spring PetClinic
 ```
 
-or
+### AWS Infrastructure
 
-```bash
-docker compose up postgres
+```text
+AWS VPC
+│
+├── Public Subnets (Multi-AZ)
+│   ├── Application Load Balancer
+│   └── NAT Gateway
+│
+├── Private Subnets (Multi-AZ)
+│   └── ECS EC2 Capacity
+│       └── PetClinic Container
+│
+├── Amazon ECR
+├── CloudWatch Logs
+└── IAM / GitHub OIDC
+
+Infrastructure provisioned with Terraform
 ```
 
-## Test Applications
+The Application Load Balancer is internet-facing, while ECS container capacity runs in private subnets. ECS instances use outbound NAT access and receive application traffic only through the ALB security group.
 
-At development time we recommend you use the test applications set up as `main()` methods in `PetClinicIntegrationTests` (using the default H2 database and also adding Spring Boot Devtools), `MySqlTestApplication` and `PostgresIntegrationTests`. These are set up so that you can run the apps in your IDE to get fast feedback and also run the same classes as integration tests against the respective database. The MySql integration tests use Testcontainers to start the database in a Docker container, and the Postgres tests use Docker Compose to do the same thing.
+---
 
-## Compiling the CSS
+## CI/CD Pipeline
 
-There is a `petclinic.css` in `src/main/resources/static/resources/css`. It was generated from the `petclinic.scss` source, combined with the [Bootstrap](https://getbootstrap.com/) library. If you make changes to the `scss`, or upgrade Bootstrap, you will need to re-compile the CSS resources using the Maven profile "css", i.e. `./mvnw package -P css`. There is no build profile for Gradle to compile the CSS.
+The GitHub Actions workflow implements multiple security and quality gates before an application image can reach Amazon ECS.
 
-## Working with Petclinic in your IDE
+| Stage | Tool | Purpose |
+|---|---|---|
+| Secret scanning | Gitleaks | Detect exposed credentials and secrets |
+| Build & unit test | Maven | Compile and validate the application |
+| Code quality | SonarCloud | Static analysis and Quality Gate enforcement |
+| Filesystem scanning | Trivy | Detect vulnerable dependencies/files |
+| Container build | Docker | Build the application image |
+| Image scanning | Trivy | Block HIGH/CRITICAL image vulnerabilities |
+| AWS authentication | GitHub OIDC | Obtain temporary AWS credentials |
+| Image publishing | Amazon ECR | Store approved container images |
+| Deployment | Amazon ECS | Deploy a new immutable application revision |
+| Runtime verification | AWS CLI / ECS | Confirm service stability and deployed revision |
 
-### Prerequisites
+The deployment stages execute only for pushes to the `main` branch.
 
-The following items should be installed in your system:
+---
 
-- Java 17 or newer (full JDK, not a JRE)
-- [Git command line tool](https://help.github.com/articles/set-up-git)
-- Your preferred IDE
-  - Eclipse with the m2e plugin. Note: when m2e is available, there is a m2 icon in `Help -> About` dialog. If m2e is
-  not there, follow the installation process [here](https://www.eclipse.org/m2e/)
-  - [Spring Tools Suite](https://spring.io/tools) (STS)
-  - [IntelliJ IDEA](https://www.jetbrains.com/idea/)
-  - [VS Code](https://code.visualstudio.com)
+## Secure Authentication
 
-### Steps
+### GitHub Actions → AWS
 
-1. On the command line run:
+GitHub Actions authenticates to AWS using OpenID Connect (OIDC).
 
-    ```bash
-    git clone https://github.com/spring-projects/spring-petclinic.git
-    ```
+This eliminates the need to store permanent AWS access keys in GitHub.
 
-1. Inside Eclipse or STS:
+The assumed IAM role has scoped permissions for:
 
-    Open the project via `File -> Import -> Maven -> Existing Maven project`, then select the root directory of the cloned repo.
+- publishing images to Amazon ECR;
+- registering ECS task definitions;
+- updating the PetClinic ECS service;
+- describing ECS resources required during deployment; and
+- passing the ECS task execution role to the ECS service.
 
-    Then either build on the command line `./mvnw generate-resources` or use the Eclipse launcher (right-click on project and `Run As -> Maven install`) to generate the CSS. Run the application's main method by right-clicking on it and choosing `Run As -> Java Application`.
+### GitHub Actions → HashiCorp Vault
 
-1. Inside IntelliJ IDEA:
+HashiCorp Vault is used to provide sensitive CI credentials at runtime.
 
-    In the main menu, choose `File -> Open` and select the Petclinic [pom.xml](pom.xml). Click on the `Open` button.
+GitHub Actions authenticates to Vault using GitHub's OIDC identity rather than storing a permanent Vault token in the repository.
 
-    - CSS files are generated from the Maven build. You can build them on the command line `./mvnw generate-resources` or right-click on the `spring-petclinic` project then `Maven -> Generates sources and Update Folders`.
+Vault provides the SonarCloud credential required by the quality-analysis stage.
 
-    - A run configuration named `PetClinicApplication` should have been created for you if you're using a recent Ultimate version. Otherwise, run the application by right-clicking on the `PetClinicApplication` main class and choosing `Run 'PetClinicApplication'`.
+---
 
-1. Navigate to the Petclinic
+## Container Security
 
-    Visit [http://localhost:8080](http://localhost:8080) in your browser.
+The application container is built using Java 17 and runs as a non-root user.
 
-## Looking for something in particular?
+The image is scanned with Trivy before publication. HIGH and CRITICAL vulnerabilities cause the pipeline to fail rather than allowing the affected image to continue to the deployment stage.
 
-|Spring Boot Configuration | Class or Java property files  |
-|--------------------------|---|
-|The Main Class | [PetClinicApplication](https://github.com/spring-projects/spring-petclinic/blob/main/src/main/java/org/springframework/samples/petclinic/PetClinicApplication.java) |
-|Properties Files | [application.properties](https://github.com/spring-projects/spring-petclinic/blob/main/src/main/resources) |
-|Caching | [CacheConfiguration](https://github.com/spring-projects/spring-petclinic/blob/main/src/main/java/org/springframework/samples/petclinic/system/CacheConfiguration.java) |
+Security remediation performed during the project included dependency upgrades for identified PostgreSQL JDBC and embedded Tomcat vulnerabilities.
 
-## Interesting Spring Petclinic branches and forks
+---
 
-The Spring Petclinic "main" branch in the [spring-projects](https://github.com/spring-projects/spring-petclinic)
-GitHub org is the "canonical" implementation based on Spring Boot and Thymeleaf. There are
-[quite a few forks](https://spring-petclinic.github.io/docs/forks.html) in the GitHub org
-[spring-petclinic](https://github.com/spring-petclinic). If you are interested in using a different technology stack to implement the Pet Clinic, please join the community there.
+## Infrastructure as Code
 
-## Interaction with other open-source projects
+AWS infrastructure is provisioned using modular Terraform.
 
-One of the best parts about working on the Spring Petclinic application is that we have the opportunity to work in direct contact with many Open Source projects. We found bugs/suggested improvements on various topics such as Spring, Spring Data, Bean Validation and even Eclipse! In many cases, they've been fixed/implemented in just a few days.
-Here is a list of them:
+```text
+infrastructure/
+└── terraform/
+    ├── modules/
+    │   ├── networking/
+    │   ├── ecs-cluster/
+    │   ├── ecs-capacity/
+    │   ├── alb/
+    │   └── ecs-service/
+    │
+    └── environments/
+        └── dev/
+```
 
-| Name | Issue |
-|------|-------|
-| Spring JDBC: simplify usage of NamedParameterJdbcTemplate | [SPR-10256](https://github.com/spring-projects/spring-framework/issues/14889) and [SPR-10257](https://github.com/spring-projects/spring-framework/issues/14890) |
-| Bean Validation / Hibernate Validator: simplify Maven dependencies and backward compatibility |[HV-790](https://hibernate.atlassian.net/browse/HV-790) and [HV-792](https://hibernate.atlassian.net/browse/HV-792) |
-| Spring Data: provide more flexibility when working with JPQL queries | [DATAJPA-292](https://github.com/spring-projects/spring-data-jpa/issues/704) |
+Terraform provisions the networking, ECS cluster and capacity, Application Load Balancer, IAM resources, CloudWatch logging, and ECS service infrastructure.
 
-## Contributing
+---
 
-The [issue tracker](https://github.com/spring-projects/spring-petclinic/issues) is the preferred channel for bug reports, feature requests and submitting pull requests.
+## Terraform and CI/CD Ownership
 
-For pull requests, editor preferences are available in the [editor config](.editorconfig) for easy use in common text editors. Read more and download plugins at <https://editorconfig.org>. All commits must include a __Signed-off-by__ trailer at the end of each commit message to indicate that the contributor agrees to the Developer Certificate of Origin.
-For additional details, please refer to the blog post [Hello DCO, Goodbye CLA: Simplifying Contributions to Spring](https://spring.io/blog/2025/01/06/hello-dco-goodbye-cla-simplifying-contributions-to-spring).
+A deliberate ownership boundary prevents Terraform and the deployment pipeline from fighting over application revisions.
 
-## License
+### Terraform owns
 
-The Spring PetClinic sample application is released under version 2.0 of the [Apache License](https://www.apache.org/licenses/LICENSE-2.0).
+- VPC and subnet infrastructure
+- Internet and NAT connectivity
+- Security groups
+- Application Load Balancer
+- ECS cluster
+- ECS EC2 capacity
+- Auto Scaling
+- IAM infrastructure
+- CloudWatch logging
+- ECS service infrastructure
+- Baseline task definition
+
+### GitHub Actions owns application releases
+
+- Docker image creation
+- ECR image publication
+- immutable Git-SHA image selection
+- new ECS task-definition revisions
+- ECS service application updates
+- deployment stability verification
+
+The ECS service Terraform configuration ignores application task-definition revision changes:
+
+```hcl
+lifecycle {
+  ignore_changes = [
+    task_definition
+  ]
+}
+```
+
+This allows GitHub Actions to deploy newer application revisions without a future Terraform run reverting the ECS service to Terraform's original baseline revision.
+
+This behavior was validated after an automated deployment: Terraform reported no infrastructure changes even though the CI/CD pipeline had deployed a newer ECS task-definition revision.
+
+---
+
+## ECS Deployment Strategy
+
+The ECS service uses ECS on EC2 with bridge networking.
+
+The application exposes container port `8080`, while ECS dynamically allocates the host port.
+
+During a deployment:
+
+```text
+Existing task
+     │
+     ├── remains available while replacement starts
+     │
+     ▼
+New task revision
+     │
+     ▼
+Dynamic host port
+     │
+     ▼
+ALB health check
+     │
+     ├── unhealthy → deployment fails/rolls back
+     │
+     └── healthy
+            │
+            ▼
+       Traffic shifts
+            │
+            ▼
+       Old task drains
+```
+
+The ECS deployment circuit breaker and rollback capability are enabled.
+
+---
+
+## Verified Automated Deployment
+
+The automated deployment workflow has been validated end-to-end.
+
+A successful deployment:
+
+- published an image tagged with the Git commit SHA;
+- registered a new ECS task-definition revision;
+- updated the ECS service;
+- started the replacement container using a dynamically assigned host port;
+- registered the replacement target with the Application Load Balancer;
+- reached a healthy ALB target state;
+- drained the previous target; and
+- reached ECS service stability.
+
+The running ECS task was verified to reference the exact immutable Git-SHA image produced by the GitHub Actions run.
+
+A subsequent `terraform plan` returned:
+
+```text
+No changes. Your infrastructure matches the configuration.
+```
+
+This validated the separation between Terraform-managed infrastructure and CI/CD-managed application releases.
+
+---
+
+## Observability
+
+Application container logs are sent to Amazon CloudWatch Logs.
+
+```text
+/ecs/pet-clinic-dev
+```
+
+CloudWatch provides centralized runtime logs for troubleshooting application startup and deployment issues.
+
+---
+
+## Security Controls
+
+The project incorporates multiple security layers:
+
+- GitHub OIDC authentication to AWS
+- GitHub OIDC authentication to HashiCorp Vault
+- least-privilege IAM permissions
+- Gitleaks secret scanning
+- SonarCloud static code analysis
+- SonarCloud Quality Gate enforcement
+- Trivy filesystem vulnerability scanning
+- Trivy container-image vulnerability scanning
+- non-root application container
+- private ECS subnets
+- ALB-to-ECS security-group restrictions
+- IMDSv2 enforcement on ECS EC2 instances
+- immutable Git-SHA container image deployment
+- ECS deployment circuit breaker and rollback
+
+---
+
+## Technology Stack
+
+**Application**
+- Java 17
+- Spring Boot
+- Maven
+
+**CI/CD & DevSecOps**
+- GitHub Actions
+- Gitleaks
+- SonarCloud
+- Trivy
+- HashiCorp Vault
+
+**Containers**
+- Docker
+- Amazon ECR
+- Amazon ECS
+
+**AWS**
+- VPC
+- EC2
+- ECS
+- ECR
+- Application Load Balancer
+- Auto Scaling
+- IAM
+- CloudWatch
+- NAT Gateway
+
+**Infrastructure as Code**
+- Terraform
+
+---
+
+## Repository Structure
+
+```text
+.
+├── .github/
+│   └── workflows/
+│       └── pipeline.yaml
+│
+├── infrastructure/
+│   └── terraform/
+│       ├── modules/
+│       │   ├── networking/
+│       │   ├── ecs-cluster/
+│       │   ├── ecs-capacity/
+│       │   ├── alb/
+│       │   └── ecs-service/
+│       └── environments/
+│           └── dev/
+│
+├── docs/
+│   └── PETCLINIC_DEVSECOPS_DEPLOYMENT.md
+│
+├── Dockerfile
+├── pom.xml
+└── README.md
+```
+
+---
+
+## Engineering Highlights
+
+This project demonstrates hands-on implementation of:
+
+- modular AWS infrastructure with Terraform;
+- ECS-on-EC2 container orchestration;
+- secure CI/CD authentication without long-lived AWS credentials;
+- centralized secrets retrieval from HashiCorp Vault;
+- automated security gates before deployment;
+- immutable container releases tied to Git commits;
+- automated ECS task-definition registration and service deployment;
+- ALB health-based traffic transition;
+- least-privilege deployment IAM permissions; and
+- separation of infrastructure and application deployment ownership.
+
+---
+
+## Further Documentation
+
+Detailed implementation and deployment notes are available in:
+
+[`docs/PETCLINIC_DEVSECOPS_DEPLOYMENT.md`](docs/PETCLINIC_DEVSECOPS_DEPLOYMENT.md)
+
+---
+
+## Future Improvements
+
+Potential next iterations include:
+
+- HTTPS using ACM
+- Route 53 DNS integration
+- CloudWatch alarms and deployment alerting
+- enhanced application health endpoints
+- deployment notifications
+- automated rollback testing
+- additional observability and dashboards
+
+---
+
+## Application Attribution
+
+This project uses the open-source Spring PetClinic application as the workload for demonstrating DevSecOps and AWS deployment engineering.
+
+Spring PetClinic is maintained by the Spring community and is licensed under the Apache License 2.0.
+
+Original project:
+
+https://github.com/spring-projects/spring-petclinic
+
+The infrastructure, containerization, security integrations, CI/CD workflow, and AWS deployment implementation in this repository are the focus of this project.
